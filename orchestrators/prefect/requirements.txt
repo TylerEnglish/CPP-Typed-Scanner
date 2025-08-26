@@ -1,0 +1,4 @@
+prefect>=3.0.0
+prefect-docker>=0.4.0
+docker>=7.0.0
+requests>=2.32.0

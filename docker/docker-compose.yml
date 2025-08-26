@@ -1,0 +1,213 @@
+name: typed-scanner
+
+networks:
+  typed_net: {}
+
+volumes:
+  minio_data: {}
+  airflow_db: {}
+  artifacts: {}
+
+services:
+  # ---------------- MinIO ----------------
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-03-12T18-04-18Z
+    command: ["server","--console-address",":9001","/data"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_NOTIFY_WEBHOOK_ENABLE_PRIMARY: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_PRIMARY: ${MINIO_WEBHOOK_ENDPOINT}
+      MINIO_NOTIFY_WEBHOOK_AUTH_TOKEN_PRIMARY: ${MINIO_WEBHOOK_AUTH_TOKEN}
+      MINIO_NOTIFY_WEBHOOK_QUEUE_DIR_PRIMARY: /tmp/minio-webhook-queue
+      MINIO_NOTIFY_WEBHOOK_QUEUE_LIMIT_PRIMARY: "0"
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [minio_data:/data]
+    networks: [typed_net]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 2s
+      retries: 30
+
+  # ---------------- Webhook ----------------
+  webhook:
+    image: typed-scanner-webhook
+    command: uvicorn app:app --host 0.0.0.0 --port 9005
+    ports: ["9005:9005"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9005/health >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+
+  # ---------------- mc-init (bucket & events) ----------------
+  mc-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+      webhook:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      BUCKET: ${BUCKET}
+    entrypoint: ["/bin/sh","-c"]
+    volumes:
+      - ../scripts/mc_init.sh:/mc_init.sh:ro
+    command: "sh /mc_init.sh"
+    networks: [typed_net]
+
+  # ---------------- Scanner (CMake) ----------------
+  scanner:
+    image: typed-scanner:local
+    build:
+      context: ..                 # include repo root with CMakeLists.txt
+      dockerfile: docker/Dockerfile
+      args:
+        CMAKE_BUILD_TYPE: Release
+    depends_on:
+      - minio
+    environment:
+      TS_PORT: "8080"
+      TS_ARTIFACT_ROOT: /artifacts/typed-scanner
+      # optional app envs:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_BUCKET: ${BUCKET}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    ports: ["8080:8080"]
+    volumes:
+      - artifacts:/artifacts
+      - ../configs:/srv/configs:ro
+      - ../templates:/srv/templates:ro
+      - ../web:/srv/web:ro
+    networks: [typed_net]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+
+  # ---------------- Airflow ----------------
+  airflow-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes: [airflow_db:/var/lib/postgresql/data]
+    networks: [typed_net]
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U airflow -d airflow -h localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  airflow-init:
+    image: apache/airflow:2.10.4
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+    user: "50000:0"
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN}
+      AIRFLOW_UI_USER: ${AIRFLOW_UI_USER}
+      AIRFLOW_UI_PASSWORD: ${AIRFLOW_UI_PASSWORD}
+    volumes:
+      - ../orchestrators/airflow/requirements.txt:/requirements.txt:ro
+    entrypoint:
+      - bash
+      - -lc
+      - >
+        set -e;
+        pip install -r /requirements.txt;
+        airflow db migrate;
+        airflow users create --role Admin
+        --username "$AIRFLOW_UI_USER"
+        --password "$AIRFLOW_UI_PASSWORD"
+        --firstname A --lastname F --email a@b.c || true
+    networks: [typed_net]
+
+  airflow-scheduler:
+    image: apache/airflow:2.10.4
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-db:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN}
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+      AWS_ENDPOINT_URL_S3: http://minio:9000
+      AIRFLOW_CONN_MINIO: aws://${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}@/?region_name=${AWS_DEFAULT_REGION}
+    volumes:
+      - ../orchestrators/airflow/dags:/opt/airflow/dags:ro
+      - ../orchestrators/airflow/requirements.txt:/requirements.txt:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - artifacts:/artifacts
+    entrypoint: ["bash","-lc","set -e; pip install -r /requirements.txt; airflow scheduler"]
+    networks: [typed_net]
+
+  airflow-webserver:
+    image: apache/airflow:2.10.4
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-db:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN}
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+      AWS_ENDPOINT_URL_S3: http://minio:9000
+      AIRFLOW_CONN_MINIO: aws://${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}@/?region_name=${AWS_DEFAULT_REGION}
+    ports: ["8088:8080"]
+    volumes:
+      - ../orchestrators/airflow/dags:/opt/airflow/dags:ro
+      - ../orchestrators/airflow/requirements.txt:/requirements.txt:ro
+    entrypoint: ["bash","-lc","set -e; pip install -r /requirements.txt; airflow api-server"]
+    networks: [typed_net]
+
+  # ---------------- Prefect ----------------
+  prefect-server:
+    image: prefecthq/prefect:3-latest
+    command: ["bash","-lc","prefect server start --host 0.0.0.0"]
+    environment: { PREFECT_LOGGING_LEVEL: INFO }
+    ports: ["4200:4200"]
+    networks: [typed_net]
+
+  prefect-worker:
+    image: prefecthq/prefect:3-latest
+    depends_on: [prefect-server]
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
+    command:
+      - bash
+      - -lc
+      - |
+        pip install prefect-docker && \
+        (prefect work-pool create ts-docker -t docker || true) && \
+        prefect worker start -p ts-docker --type docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [typed_net]
+
+  prefect-deploy:
+    image: prefecthq/prefect:3-latest
+    depends_on: [prefect-server]
+    environment: { PREFECT_API_URL: http://prefect-server:4200/api }
+    working_dir: /repo
+    volumes: [..:/repo:ro]
+    command: ["bash","-lc","pip install -r orchestrators/prefect/requirements.txt && python orchestrators/prefect/flow.py --deploy"]
+    networks: [typed_net]

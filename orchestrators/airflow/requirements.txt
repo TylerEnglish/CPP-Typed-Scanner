@@ -1,0 +1,3 @@
+apache-airflow-providers-amazon
+boto3>=1.34.0
+docker>=7.0.0

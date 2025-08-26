@@ -15,11 +15,34 @@ region   = "us-east-1"
 access_key_env = "MINIO_ROOT_USER"          # read from env
 secret_key_env = "MINIO_ROOT_PASSWORD"
 
-[orchestrator]
-type = "prefect"        # "prefect" | "airflow"
-mode = "event"          # "event" (notifications) | "poll"
-poll_interval_s = 30    # used when mode="poll"
-# webhook_url = ""      # optional: external notifier → Prefect
+# Orchestrators: enable one or many
+[orchestrators]
+enabled = ["prefect", "airflow"]   # pick any subset: ["prefect"], ["airflow"], or both
+mode    = "event"                  # "event" (MinIO notifications) | "poll"
+
+[orchestrators.prefect]
+deployment_name = "typed-scanner"
+work_pool       = "default-agent"
+# If using event webhooks to Prefect Cloud, set the webhook URL; otherwise run a small local fan-out
+webhook_url     = ""               # optional; leave blank if not using webhooks
+tags            = ["typed-scanner"]
+
+[orchestrators.airflow]
+# Two ways: REST-trigger OR sensors inside the DAG (both are okay)
+base_url        = "http://airflow-webserver:8080"
+dag_id          = "typed_scanner"
+rest_trigger    = true             # if true, fan-out service POSTs /api/v1/dags/<dag_id>/dagRuns
+use_s3_sensors  = true             # DAG also uses S3KeySensor / S3KeysUnchangedSensor to watch MinIO
+
+# Event fan-out (only used when orchestrators.mode="event")
+[events]
+source = "minio"                   # MinIO bucket notifications
+route  = "both"                    # "prefect" | "airflow" | "both"
+
+# Poll settings (only used when orchestrators.mode="poll")
+[poll]
+interval_s = 30
+prefixes   = ["incoming/"]         # key prefixes to watch
 
 [scanner]
 reader_threads = 4
