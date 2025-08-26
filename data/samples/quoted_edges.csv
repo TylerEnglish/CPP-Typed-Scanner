@@ -1,0 +1,6 @@
+id,name,notes,amount
+1,"Doe, John","He said ""Hello, world!"" then left",12.34
+2,"Multi-line","First line
+Second line
+Third line, with comma",56.78
+3,"Comma ""inside"", ok","CSV per RFC 4180 quoting rules",0

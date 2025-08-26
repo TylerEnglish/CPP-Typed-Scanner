@@ -1,41 +1,71 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
+# ── C/C++ & build outputs
 *.o
 *.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
+*.lo
 *.la
 *.a
 *.lib
-
-# Executables
+*.so
+*.dylib
+*.dll
+*.pdb
+*.exp
+*.idb
+*.ilk
 *.exe
-*.out
-*.app
 
-# debug information files
-*.dwo
+# ── CMake / Ninja
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+.ninja_deps
+.ninja_log
+
+# ── Common build dirs
+/build/
+build/
+build-*/
+cmake-build-*/
+out/
+bin/
+lib/
+dist/
+
+# ── IDEs & tooling
+.vscode/
+.idea/
+.cache/
+.history/
+*.swp
+*.swo
+
+# ── OS cruft
+.DS_Store
+Thumbs.db
+
+# ── Logs & coverage
+*.log
+logs/
+coverage/
+.prof
+.perf
+*.gcda
+*.gcno
+*.gcov
+
+# ── Python (orchestrators)
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+
+# ── Local data & artifacts
+artifacts/
+data/large/
+
+
+_docs

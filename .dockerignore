@@ -1,0 +1,43 @@
+# VCS & meta
+.git
+.gitignore
+.github/
+
+# Editors & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Builds & outputs
+/build
+/build-*
+/cmake-build-*
+/out
+/bin
+/lib
+/dist
+CMakeFiles
+CMakeCache.txt
+cmake_install.cmake
+Testing
+.ninja_deps
+.ninja_log
+
+# Local data & artifacts
+/artifacts
+/data/large
+/logs
+*.log
+
+# Tests & benches (not needed in runtime image)
+tests/
+bench/
+
+# Python virtual envs & caches
+.venv
+__pycache__/
+*.pyc
+
+# Misc
+*.swp

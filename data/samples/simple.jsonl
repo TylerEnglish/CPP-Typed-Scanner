@@ -1,0 +1,5 @@
+{"id":1,"name":"Alice","age":30,"score":98.5,"active":true,"date":"2025-01-02"}
+{"id":2,"name":"Bob","age":41,"score":82.0,"active":false,"date":"2024-11-18"}
+{"id":3,"name":"Carol","age":27,"score":91.25,"active":true,"date":"2025-03-05"}
+{"id":4,"name":"Diego","age":35,"score":70.0,"active":false,"date":"2023-07-14"}
+{"id":5,"name":"Eve","age":29,"score":88.0,"active":true,"date":"2025-08-01"}

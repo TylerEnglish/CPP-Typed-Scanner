@@ -1,0 +1,5 @@
+id,name,notes
+1,Good,"ok"
+2,Bad,"missing closing quote
+3,AlsoBad,Unescaped "quote",
+4,Good,"""quote inside OK"""

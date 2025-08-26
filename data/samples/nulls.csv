@@ -1,0 +1,5 @@
+id,text,val,flag,date
+1,,10.0,true,2025-01-01
+2,NA,,false,2025-01-02
+3,null,3.14,,2025-01-03
+4,NULL,,-1, 

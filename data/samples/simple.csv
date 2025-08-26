@@ -1,0 +1,6 @@
+id,name,age,score,active,signup_date
+1,Alice,30,98.5,true,2025-01-02
+2,Bob,41,82.0,false,2024-11-18
+3,Carol,27,91.25,true,2025-03-05
+4,Diego,35,70.0,false,2023-07-14
+5,Eve,29,88.0,true,2025-08-01

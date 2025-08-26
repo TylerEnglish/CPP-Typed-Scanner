@@ -1,0 +1,56 @@
+# Global runtime & environment defaults (parsed by C++ via toml++)
+[project]
+id = "typed-scanner"
+artifact_root = "artifacts/typed-scanner"   # container mount point
+
+[server]
+port = 8080
+scan_per_request = true                     # rescan artifacts on GET /
+index_title = "Typed Scanner Reports"
+
+[minio]
+endpoint = "http://minio:9000"
+bucket   = "incoming"
+region   = "us-east-1"
+access_key_env = "MINIO_ROOT_USER"          # read from env
+secret_key_env = "MINIO_ROOT_PASSWORD"
+
+[orchestrator]
+type = "prefect"        # "prefect" | "airflow"
+mode = "event"          # "event" (notifications) | "poll"
+poll_interval_s = 30    # used when mode="poll"
+# webhook_url = ""      # optional: external notifier → Prefect
+
+[scanner]
+reader_threads = 4
+chunk_bytes    = 524288        # 512 KiB
+arena_bytes    = 16777216      # 16 MiB per-chunk arena
+max_errors_per_field = 20
+
+[csv]
+delimiter = ","
+quote     = "\""
+escape    = "\""
+header    = true
+null_values = ["", "NA", "null", "NULL"]
+
+[jsonl]
+encoding = "utf-8"
+strict   = true                # strict = reject non-object lines
+
+[render]
+output_ext = "html"            # "html" or "md"
+template_dir = "templates"
+partials_dir = "templates/partials"
+static_js = ["web/js/vega.min.js","web/js/vega-lite.min.js","web/js/vega-embed.min.js"]
+static_css = ["web/css/report.css"]
+
+[sync]
+on_create = "build"            # build|skip
+on_update = "rebuild"          # rebuild|skip
+on_delete = "delete_artifacts" # delete_artifacts|keep
+idempotency_use_etag = true
+
+[limits]
+max_parallel = 2
+max_inflight_bytes = 1073741824   # 1 GiB
