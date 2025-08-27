@@ -1,0 +1,1 @@
+namespace { int _ts_sys_counters_placeholder = 0; }

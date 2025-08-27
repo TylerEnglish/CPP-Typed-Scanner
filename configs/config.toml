@@ -18,7 +18,7 @@ secret_key_env = "MINIO_ROOT_PASSWORD"
 # Orchestrators: enable one or many
 [orchestrators]
 enabled = ["prefect", "airflow"]   # pick any subset: ["prefect"], ["airflow"], or both
-mode    = "event"                  # "event" (MinIO notifications) | "poll"
+mode    = "poll"                  # "event" (MinIO notifications) | "poll"
 
 [orchestrators.prefect]
 deployment_name = "typed-scanner"
@@ -42,7 +42,7 @@ route  = "both"                    # "prefect" | "airflow" | "both"
 # Poll settings (only used when orchestrators.mode="poll")
 [poll]
 interval_s = 30
-prefixes   = ["incoming/"]         # key prefixes to watch
+prefixes   = [""]
 
 [scanner]
 reader_threads = 4
@@ -62,7 +62,7 @@ encoding = "utf-8"
 strict   = true                # strict = reject non-object lines
 
 [render]
-output_ext = "html"            # "html" or "md"
+output_ext = "html"
 template_dir = "templates"
 partials_dir = "templates/partials"
 static_js = ["web/js/vega.min.js","web/js/vega-lite.min.js","web/js/vega-embed.min.js"]

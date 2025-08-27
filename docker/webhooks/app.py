@@ -1,80 +1,81 @@
-from fastapi import FastAPI, Request, Header, HTTPException
-import os, requests
+from __future__ import annotations
 
-AUTH_TOKEN = os.getenv("AUTH_TOKEN", "secret123")
+import json
+import os
+from typing import Any, Dict
 
-# Prefect
-PREFECT_API_URL = os.getenv("PREFECT_API_URL", "http://prefect-server:4200/api")
-FLOW_NAME = os.getenv("PREFECT_FLOW_NAME", "scan_file")
-DEPLOYMENT_NAME = os.getenv("PREFECT_DEPLOYMENT_NAME", "typed-scanner")
+import requests
+from flask import Flask, request, jsonify
 
-# Airflow
-AIRFLOW_API_URL = os.getenv("AIRFLOW_API_URL", "http://airflow-webserver:8080/api/v1")
-AIRFLOW_USER = os.getenv("AIRFLOW_USER", "airflow")
-AIRFLOW_PASSWORD = os.getenv("AIRFLOW_PASSWORD", "airflow")
+app = Flask(__name__)
 
-app = FastAPI()
+WEBHOOK_AUTH_TOKEN = os.getenv("WEBHOOK_AUTH_TOKEN", "")
+PREFECT_API = os.getenv("PREFECT_API", "")
+PREFECT_DEPLOYMENT_ID = os.getenv("PREFECT_DEPLOYMENT_ID", "")
+AIRFLOW_BASE_URL = os.getenv("AIRFLOW_BASE_URL", "")
+AIRFLOW_DAG_ID = os.getenv("AIRFLOW_DAG_ID", "typed_scanner")
 
-@app.get("/")
-def root():
-    return {"service": "typed-scanner-webhook", "endpoints": ["/health", "/ingest"]}
+def _auth_ok(req) -> bool:
+    """Optional shared-secret check from MinIO -> this service."""
+    if not WEBHOOK_AUTH_TOKEN:
+        return True
+    return req.headers.get("Authorization") == f"Bearer {WEBHOOK_AUTH_TOKEN}"
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return jsonify({"ok": True})
 
-def trigger_prefect(bucket, key, event, etag=None):
-    r = requests.post(
-        f"{PREFECT_API_URL}/deployments/filter",
-        json={"deployments": {"name": {"any_": [DEPLOYMENT_NAME]}}},
-        timeout=10,
-    )
-    r.raise_for_status()
-    data = r.json()
-    items = data.get("data", []) if isinstance(data, dict) else data
-    if not items:
-        print("Prefect deployment not found")
-        return
-    deployment_id = items[0]["id"]
-    payload = {
-        "parameters": {"bucket": bucket, "key": key, "event": event, "etag": etag},
-        "name": f"minio-{key}",
-    }
-    cr = requests.post(
-        f"{PREFECT_API_URL}/deployments/{deployment_id}/create_flow_run",
-        json=payload,
-        timeout=10,
-    )
-    cr.raise_for_status()
-    print("Triggered Prefect run:", cr.json())
+@app.post("/minio")
+def minio_events():
+    if not _auth_ok(request):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
 
-def trigger_airflow(bucket, key, event, etag=None):
-    data = {"conf": {"bucket": bucket, "key": key, "event": event, "etag": etag}}
-    ar = requests.post(
-        f"{AIRFLOW_API_URL}/dags/typed_scanner/dagRuns",
-        auth=(AIRFLOW_USER, AIRFLOW_PASSWORD),
-        json=data,
-        timeout=10,
-    )
-    if ar.status_code >= 400:
-        print("Airflow trigger failed", ar.text)
-    else:
-        print("Triggered Airflow DAG:", ar.json())
+    try:
+        payload: Dict[str, Any] = request.get_json(force=True, silent=False)
+    except Exception:
+        return jsonify({"ok": False, "error": "invalid json"}), 400
 
-@app.post("/ingest")
-async def ingest(request: Request, authorization: str | None = Header(default=None)):
-    if AUTH_TOKEN and (authorization or "").replace("Bearer ", "") != AUTH_TOKEN:
-        raise HTTPException(status_code=401, detail="bad token")
-    body = await request.json()
-    records = body.get("Records") or []
-    for rec in records:
-        s3 = rec.get("s3", {})
-        bucket = (s3.get("bucket") or {}).get("name")
-        obj = s3.get("object") or {}
-        key = obj.get("key")
-        etag = obj.get("eTag")
-        event = rec.get("eventName")
+    # MinIO sends S3-compatible records. We log & optionally forward.
+    records = payload.get("Records", [])
+    app.logger.info("Received %d event(s) from MinIO", len(records))
+    app.logger.debug(json.dumps(payload, indent=2))
+
+    # Pull out minimal info (bucket, key, event)
+    extracted = []
+    for r in records:
+        s3 = r.get("s3", {})
+        bucket = s3.get("bucket", {}).get("name")
+        # key may be URL-encoded per S3 semantics; leave as-is for now
+        key = s3.get("object", {}).get("key")
+        event = r.get("eventName")
         if bucket and key:
-            trigger_prefect(bucket, key, event, etag)
-            trigger_airflow(bucket, key, event, etag)
-    return {"ok": True, "count": len(records)}
+            extracted.append({"bucket": bucket, "key": key, "event": event})
+
+    # Optional: forward to Prefect Deployment trigger (if configured)
+    if PREFECT_API and PREFECT_DEPLOYMENT_ID and extracted:
+        try:
+            # Prefect 3 "create flow run" endpoint (deployment based)
+            # (Keep this as a stub; adjust path/token as needed in your env)
+            for item in extracted:
+                body = {"parameters": item}
+                requests.post(
+                    f"{PREFECT_API}/deployments/{PREFECT_DEPLOYMENT_ID}/create_flow_run",
+                    json=body, timeout=5
+                )
+        except Exception as e:
+            app.logger.warning("Prefect forward failed: %s", e)
+
+    # Optional: forward to Airflow DAG run API (if configured)
+    if AIRFLOW_BASE_URL and AIRFLOW_DAG_ID and extracted:
+        try:
+            for item in extracted:
+                body = {"conf": item}
+                # Airflow Stable REST: POST /api/v1/dags/{dag_id}/dagRuns
+                requests.post(
+                    f"{AIRFLOW_BASE_URL}/api/v1/dags/{AIRFLOW_DAG_ID}/dagRuns",
+                    json=body, timeout=5
+                )
+        except Exception as e:
+            app.logger.warning("Airflow forward failed: %s", e)
+
+    return jsonify({"ok": True, "events": extracted})

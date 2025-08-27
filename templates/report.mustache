@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Typed Scanner Report</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preload" href="./report.css" as="style">
+  <link rel="stylesheet" href="./report.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="title">
+      <h1>Typed Scanner • Report</h1>
+      <p class="subtitle">CSV & JSONL tokenization • performance & parsing health</p>
+    </div>
+    <nav class="actions">
+      <button id="toggle-theme" class="btn">🌗 Theme</button>
+      <a id="download-json" class="btn btn-outline" href="#" download="run.json">Download JSON</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    <!-- KPI Cards -->
+    {{> cards}}
+
+    <!-- Quick Nav -->
+    <aside class="toc">
+      <a href="#comparison">Before vs After</a>
+      <a href="#charts">Charts</a>
+      <a href="#tables">Tables</a>
+    </aside>
+
+    <!-- Comparison section -->
+    <section id="comparison" class="panel">
+      <h2>Before vs After</h2>
+      <p class="muted">If a baseline (“before”) run is provided, deltas are shown below.</p>
+      <div id="compare-kpis" class="kpi-compare-grid"></div>
+      <div class="charts-grid">
+        <div class="chart-card">
+          <h3>Throughput (Tokens/sec)</h3>
+          <div id="chart-compare-tokens"></div>
+        </div>
+        <div class="chart-card">
+          <h3>Wall Throughput (MB/s)</h3>
+          <div id="chart-compare-mbs"></div>
+        </div>
+        <div class="chart-card">
+          <h3>Latency (p95 ms — lower is better)</h3>
+          <div id="chart-compare-lat"></div>
+        </div>
+        <div class="chart-card">
+          <h3>Peak RSS (MB)</h3>
+          <div id="chart-compare-rss"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Chart section -->
+    <section id="charts" class="panel">
+      <h2>Charts</h2>
+      {{> charts}}
+    </section>
+
+    <!-- Tables -->
+    <section id="tables" class="panel">
+      <h2>Tables</h2>
+      {{> tables}}
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>Typed Scanner • generated {{date}}</span>
+  </footer>
+
+  <!-- payload -->
+  <script id="run-data" type="application/json">{{&ctx}}</script>
+
+  <!-- local first (copy these files into each artifact folder alongside report.html) -->
+  <script src="./vega.min.js"></script>
+  <script src="./vega-lite.min.js"></script>
+  <script src="./vega-embed.min.js"></script>
+
+  <script>
+  // ---------- Helpers ----------
+  const $ = (sel) => document.querySelector(sel);
+  const fmt = {
+    int: (n) => (n ?? 0).toLocaleString(),
+    num: (n, d=2) => (n ?? 0).toLocaleString(undefined, { maximumFractionDigits: d }),
+    ms: (n) => `${fmt.num(n, 0)} ms`,
+    pct: (n) => `${fmt.num(n, 1)}%`,
+    mb: (n) => `${fmt.num(n, 2)} MB`
+  };
+  const delta = (after, before, invert=false) => {
+    // invert=true means lower is better (e.g., latency)
+    if (before == null || after == null) return { val: 0, dir: 'flat' };
+    const raw = after - before;
+    const better = invert ? raw < 0 : raw > 0;
+    const dir = raw === 0 ? 'flat' : (better ? 'up' : 'down');
+    const pct = before === 0 ? 0 : (raw / before) * 100;
+    return { val: raw, pct, dir };
+  }
+  const chip = (d, unit='') => {
+    const s = d.dir === 'up' ? '▲' : d.dir === 'down' ? '▼' : '•';
+    const cls = `delta ${d.dir}`;
+    const pct = isFinite(d.pct) ? fmt.num(d.pct, 1) : '0.0';
+    return `<span class="${cls}" title="${fmt.num(d.val)}${unit}">${s} ${pct}%</span>`;
+  }
+
+  function mountKPIs(current, baseline) {
+    // Fill primary KPI cards
+    const map = [
+      ['#kpi-rows',              fmt.int(current.rows)],
+      ['#kpi-mbs',               fmt.num(current.throughput_mb_s)],
+      ['#kpi-tokens',            fmt.num(current.tokens_per_sec)],
+      ['#kpi-allocs',            fmt.num(current.allocs_per_sec)],
+      ['#kpi-p95',               fmt.ms(current.p95_ms)],
+      ['#kpi-rss',               fmt.mb(current.peak_rss_mb)],
+      ['#kpi-cpu',               fmt.pct(current.cpu_pct)],
+      ['#kpi-file',              current.filename || '—'],
+      ['#kpi-type',              current.content_type || '—'],
+      ['#kpi-size',              fmt.int(current.file_size)],
+      ['#kpi-etag',              current.etag || '—'],
+    ];
+    for (const [sel, val] of map) { const el = $(sel); if (el) el.textContent = val; }
+
+    // Comparison KPIs (if baseline exists)
+    const host = $('#compare-kpis');
+    if (!host || !baseline) return;
+
+    const items = [
+      { label: 'Tokens/sec',    a: current.tokens_per_sec, b: baseline.tokens_per_sec, unit: '', invert: false },
+      { label: 'MB/s',          a: current.throughput_mb_s, b: baseline.throughput_mb_s, unit: '', invert: false },
+      { label: 'p95 (ms)',      a: current.p95_ms, b: baseline.p95_ms, unit: ' ms', invert: true },
+      { label: 'Peak RSS (MB)', a: current.peak_rss_mb, b: baseline.peak_rss_mb, unit: ' MB', invert: true },
+      { label: 'CPU %',         a: current.cpu_pct, b: baseline.cpu_pct, unit: '%', invert: true },
+      { label: 'Allocs/sec',    a: current.allocs_per_sec, b: baseline.allocs_per_sec, unit: '', invert: true },
+    ];
+    host.innerHTML = items.map(it => {
+      const d = delta(it.a, it.b, it.invert);
+      return `<div class="kpi-compare">
+        <div class="kpi-compare__label">${it.label}</div>
+        <div class="kpi-compare__vals">
+          <span class="kpi-compare__after">${fmt.num(it.a)}</span>
+          <span class="kpi-compare__sep"> vs </span>
+          <span class="kpi-compare__before">${fmt.num(it.b)}</span>
+          ${chip(d, it.unit)}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function asStageRows(r){
+    return (r.stage_times || []).map(s => ({
+      stage: s.stage, duration_ms: s.duration_ms
+    }));
+  }
+
+  // ---------- Vega-Lite mounts ----------
+  function VL(spec, el){
+    if (!window.vegaEmbed) return;
+    window.vegaEmbed(el, spec, { actions: false, renderer: 'canvas' });
+  }
+
+  function charts(current, baseline){
+    // 1) Throughput timeline
+    const series = (current.series || []).map(p => ({ name: 'After', time_ms: p.time_ms, value: p.mb_s }));
+    const seriesB = baseline ? (baseline.series || []).map(p => ({ name: 'Before', time_ms: p.time_ms, value: p.mb_s })) : [];
+    VL({
+      $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+      width: "container", height: 220,
+      data: { values: [...seriesB, ...series] },
+      mark: { type: "line" },
+      encoding: {
+        x: { field: "time_ms", type: "quantitative", title: "Time (ms)" },
+        y: { field: "value", type: "quantitative", title: "MB/s" },
+        color: { field: "name", type: "nominal" }
+      },
+      title: "Throughput over time"
+    }, "#chart-throughput");
+
+    // 2) Memory timeline
+    const rssA = (current.series || []).map(p => ({ name: 'After', time_ms: p.time_ms, value: p.rss_mb }));
+    const rssB = baseline ? (baseline.series || []).map(p => ({ name: 'Before', time_ms: p.time_ms, value: p.rss_mb })) : [];
+    VL({
+      $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+      width: "container", height: 220,
+      data: { values: [...rssB, ...rssA] },
+      mark: { type: "line" },
+      encoding: {
+        x: { field: "time_ms", type: "quantitative", title: "Time (ms)" },
+        y: { field: "value", type: "quantitative", title: "RSS (MB)" },
+        color: { field: "name", type: "nominal" }
+      },
+      title: "Memory (RSS) over time"
+    }, "#chart-rss");
+
+    // 3) Allocs timeline
+    const allocA = (current.series || []).map(p => ({ name: 'After', time_ms: p.time_ms, value: p.allocs_per_sec }));
+    const allocB = baseline ? (baseline.series || []).map(p => ({ name: 'Before', time_ms: p.time_ms, value: p.allocs_per_sec })) : [];
+    VL({
+      $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+      width: "container", height: 220,
+      data: { values: [...allocB, ...allocA] },
+      mark: { type: "line" },
+      encoding: {
+        x: { field: "time_ms", type: "quantitative", title: "Time (ms)" },
+        y: { field: "value", type: "quantitative", title: "Allocs/sec" },
+        color: { field: "name", type: "nominal" }
+      },
+      title: "Allocations over time"
+    }, "#chart-allocs");
+
+    // 4) Stage latency bars
+    const stA = asStageRows(current).map(s => ({ name: 'After', ...s }));
+    const stB = baseline ? asStageRows(baseline).map(s => ({ name: 'Before', ...s })) : [];
+    VL({
+      $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+      width: "container", height: 260,
+      data: { values: [...stB, ...stA] },
+      mark: "bar",
+      encoding: {
+        y: { field: "stage", type: "nominal", sort: "-x", title: "Stage" },
+        x: { field: "duration_ms", type: "quantitative", title: "Duration (ms)" },
+        color: { field: "name", type: "nominal" },
+        tooltip: [{field:"duration_ms", type:"quantitative"}]
+      },
+      title: "Per-stage latency"
+    }, "#chart-stages");
+
+    // 5) Errors by field
+    const errs = Object.entries(current.errors_by_field || {}).map(([field, count]) => ({ field, count }));
+    VL({
+      $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+      width: "container", height: 220,
+      data: { values: errs },
+      mark: "bar",
+      encoding: {
+        x: { field: "field", type: "nominal", sort: "-y", title: "Field" },
+        y: { field: "count", type: "quantitative", title: "Errors" },
+        tooltip: [{field:"count", type:"quantitative"}]
+      },
+      title: "Errors by field"
+    }, "#chart-errors");
+
+    // 6) CSV vs JSONL tokens/sec (if present)
+    const fmtRows = (current.csv_vs_jsonl_tokens || []).map(r => ({ format: r.format, tokens: r.tokens_per_sec }));
+    if (fmtRows.length) {
+      VL({
+        $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+        width: "container", height: 200,
+        data: { values: fmtRows },
+        mark: "bar",
+        encoding: {
+          x: { field: "format", type: "nominal", title: "Format" },
+          y: { field: "tokens", type: "quantitative", title: "Tokens/sec" },
+          tooltip: [{field:"tokens", type:"quantitative"}]
+        },
+        title: "CSV vs JSONL throughput"
+      }, "#chart-format");
+    }
+
+    // Comparison mini-charts
+    const mkCompareBar = (id, label, cur, base, invert=false) => {
+      const rows = [
+        { name: "Before", value: base ?? 0 },
+        { name: "After",  value: cur ?? 0 }
+      ];
+      VL({
+        $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+        width: "container", height: 180,
+        data: { values: rows },
+        mark: "bar",
+        encoding: {
+          x: { field: "name", type: "nominal" },
+          y: { field: "value", type: "quantitative", title: label }
+        }
+      }, id);
+    };
+    if (baseline) {
+      mkCompareBar("#chart-compare-tokens", "Tokens/sec", current.tokens_per_sec, baseline.tokens_per_sec, false);
+      mkCompareBar("#chart-compare-mbs",    "MB/s",       current.throughput_mb_s, baseline.throughput_mb_s, false);
+      mkCompareBar("#chart-compare-lat",    "p95 (ms)",   current.p95_ms, baseline.p95_ms, true);
+      mkCompareBar("#chart-compare-rss",    "Peak RSS (MB)", current.peak_rss_mb, baseline.peak_rss_mb, true);
+    }
+  }
+
+  function tables(current, baseline){
+    // Input metadata
+    const meta = [
+      ["Filename", current.filename || "—"],
+      ["Content-Type", current.content_type || "—"],
+      ["Size (bytes)", fmt.int(current.file_size)],
+      ["ETag", current.etag || "—"]
+    ];
+    $('#tbl-input-meta tbody').innerHTML = meta.map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+
+    // Stage breakdown
+    const total = current.wall_time_ms || 0;
+    const rows = (current.stage_times || []).map(s => {
+      const pct = total > 0 ? (s.duration_ms / total) * 100 : 0;
+      return `<tr>
+        <td>${s.stage}</td>
+        <td class="num">${fmt.ms(s.duration_ms)}</td>
+        <td class="num">${fmt.num(pct,1)}%</td>
+      </tr>`;
+    }).join('');
+    $('#tbl-stage tbody').innerHTML = rows;
+
+    // Errors/Nulls table
+    const errsMap = current.errors_by_field || {};
+    const errRows = Object.keys(errsMap).length
+      ? Object.entries(errsMap).map(([f,c]) => `<tr><td>${f}</td><td class="num">${fmt.int(c)}</td></tr>`).join('')
+      : `<tr><td colspan="2" class="muted">No errors recorded.</td></tr>`;
+    $('#tbl-errors tbody').innerHTML = errRows;
+
+    // Format throughput (CSV vs JSONL)
+    const fmtRows = (current.csv_vs_jsonl_tokens || []).map(r =>
+      `<tr><td>${r.format}</td><td class="num">${fmt.num(r.tokens_per_sec)}</td><td class="num">${fmt.num(r.mb_s)}</td></tr>`
+    ).join('');
+    $('#tbl-format tbody').innerHTML = fmtRows || `<tr><td colspan="3" class="muted">No format comparison available.</td></tr>`;
+
+    // Build a downloadable JSON data URL
+    try {
+      const blob = new Blob([JSON.stringify(current, null, 2)], {type: "application/json"});
+      $('#download-json').href = URL.createObjectURL(blob);
+    } catch {}
+  }
+
+  // ---------- Boot ----------
+  (function(){
+    const ctx = JSON.parse(document.getElementById('run-data').textContent || "{}");
+    const current = ctx.compare?.after ?? ctx;
+    const baseline = ctx.compare?.before ?? null;
+
+    // Theme toggle
+    const root = document.documentElement;
+    const stored = localStorage.getItem('ts-theme');
+    if (stored) root.setAttribute('data-theme', stored);
+    $('#toggle-theme').addEventListener('click', () => {
+      const cur = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', cur); localStorage.setItem('ts-theme', cur);
+    });
+
+    mountKPIs(current, baseline);
+    charts(current, baseline);
+    tables(current, baseline);
+  })();
+  </script>
+</body>
+</html>
