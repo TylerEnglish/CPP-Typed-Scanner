@@ -1,5 +1,6 @@
 #include "typed_scanner/run_json.hpp"
 #include <sstream>
+#include <cmath>     // for std::isfinite
 
 namespace ts {
 
@@ -18,19 +19,23 @@ static void esc(std::ostringstream& o, const std::string& s){
   o << '"';
 }
 
+static inline double safe_num(double v) {
+  return std::isfinite(v) ? v : 0.0;
+}
+
 std::string RunJsonWriter::to_json(const RunJsonPayload& p) {
   std::ostringstream o;
   o << "{";
   o << "\"rows\":" << p.rows << ",";
   o << "\"bytes\":" << p.bytes << ",";
-  o << "\"wall_time_ms\":" << p.wall_time_ms << ",";
-  o << "\"throughput_mb_s\":" << p.throughput_mb_s << ",";
-  o << "\"tokens_per_sec\":" << p.tokens_per_sec << ",";
-  o << "\"allocs_per_sec\":" << p.allocs_per_sec << ",";
-  o << "\"p50_ms\":" << p.p50_ms << ",";
-  o << "\"p95_ms\":" << p.p95_ms << ",";
-  o << "\"peak_rss_mb\":" << p.peak_rss_mb << ",";
-  o << "\"cpu_pct\":" << p.cpu_pct << ",";
+  o << "\"wall_time_ms\":" << safe_num(p.wall_time_ms) << ",";
+  o << "\"throughput_mb_s\":" << safe_num(p.throughput_mb_s) << ",";
+  o << "\"tokens_per_sec\":" << safe_num(p.tokens_per_sec) << ",";
+  o << "\"allocs_per_sec\":" << safe_num(p.allocs_per_sec) << ",";
+  o << "\"p50_ms\":" << safe_num(p.p50_ms) << ",";
+  o << "\"p95_ms\":" << safe_num(p.p95_ms) << ",";
+  o << "\"peak_rss_mb\":" << safe_num(p.peak_rss_mb) << ",";
+  o << "\"cpu_pct\":" << safe_num(p.cpu_pct) << ",";
 
   o << "\"stage_times\":[";
   for (size_t i=0;i<p.stage_times.size();++i){
@@ -54,10 +59,10 @@ std::string RunJsonWriter::to_json(const RunJsonPayload& p) {
     if (i) o << ",";
     const auto& s = p.series[i];
     o << "{"
-      << "\"time_ms\":" << s.time_ms << ","
-      << "\"mb_s\":" << s.mb_s << ","
-      << "\"rss_mb\":" << s.rss_mb << ","
-      << "\"allocs_per_sec\":" << s.allocs_per_sec
+      << "\"time_ms\":" << safe_num(s.time_ms) << ","
+      << "\"mb_s\":" << safe_num(s.mb_s) << ","
+      << "\"rss_mb\":" << safe_num(s.rss_mb) << ","
+      << "\"allocs_per_sec\":" << safe_num(s.allocs_per_sec)
       << "}";
   }
   o << "],";

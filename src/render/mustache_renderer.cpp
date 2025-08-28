@@ -17,6 +17,7 @@
 #include <system_error>
 #include <vector>
 #include <cctype>
+#include <ctime>   // for footer date
 
 namespace ts {
 
@@ -137,10 +138,19 @@ bool MustacheRenderer::render_to_file(std::string_view template_name,
   if (!view.is_valid()) { err_ = view.error_message(); return false; }
 
   kainjow::mustache::data data;
-  // pass raw JSON; template should use triple-stache {{{ctx}}} to avoid escaping
+  // raw JSON to be included with {{{ctx}}}
   data.set("ctx", std::string(context_json));
 
-  // keep escaping neutral; JSON should be included with {{{ctx}}}
+  // footer date
+  {
+    auto t = std::time(nullptr);
+    char buf[64];
+    if (std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&t))) {
+      data.set("date", std::string(buf));
+    }
+  }
+
+  // keep escaping neutral; template controls escaping
   view.set_custom_escape([](const std::string& s){ return s; });
 
   const std::string rendered = view.render(data);

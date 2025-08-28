@@ -169,20 +169,29 @@ void scan_samples_if_requested(const std::string& artifact_root,
   }
 }
 
-} // namespace
+}
 
 int main(int argc, char** argv) {
   auto cli = parse_cli(argc, argv);
 
+  bool did_any_scan = false;
+
   if (!cli.serve_only) {
-    // explicit scans first
+    // explicit scans
     for (const auto& f : cli.scans) {
+      did_any_scan = true;
       (void)scan_one_file(f, cli.artifact_root, cli.slug_mode, cli.slug_len);
     }
-    // then sample bundle (if requested)
+    // sample bundle
     if (cli.scan_samples) {
+      did_any_scan = true;
       scan_samples_if_requested(cli.artifact_root, cli.slug_mode, cli.slug_len);
     }
+  }
+
+  // If we performed any scans, exit now (do not start another server).
+  if (did_any_scan) {
+    return 0;
   }
 
   ts::HttpServer::Config cfg;
