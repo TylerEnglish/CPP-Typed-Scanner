@@ -9,7 +9,6 @@ option(TS_BUILD_TESTS "Build unit tests" ON)
 option(TS_BUILD_BENCH "Build micro-benchmarks" ON)
 option(TS_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
 option(TS_ENABLE_SANITIZERS "Enable ASAN/UBSAN (non-Windows)" OFF)
-# NEW: toggle NDJSON (simdjson) tokenizer while we adapt to simdjson v3
 option(TS_ENABLE_JSONL "Build JSONL (simdjson) tokenizer" ON)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -70,7 +69,7 @@ endif()
 add_library(kainjow_mustache INTERFACE)
 target_include_directories(kainjow_mustache INTERFACE
   "${kainjow_mustache_SOURCE_DIR}/include"
-  "${kainjow_mustache_SOURCE_DIR}"           # just in case (older layouts)
+  "${kainjow_mustache_SOURCE_DIR}"
 )
 add_library(kainjow::mustache ALIAS kainjow_mustache)
 

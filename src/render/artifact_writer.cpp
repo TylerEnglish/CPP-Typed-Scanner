@@ -35,7 +35,8 @@ bool write_report_dir(const std::string& artifact_root,
   rcfg.partials_dir = rcfg.template_dir + "/partials";
   rcfg.static_js    = {"web/js/vega.min.js",
                        "web/js/vega-lite.min.js",
-                       "web/js/vega-embed.min.js"};
+                       "web/js/vega-embed.min.js",
+                       "web/js/report.js"};
   rcfg.static_css   = {"web/css/report.css"};
 
   ts::MustacheRenderer renderer(rcfg);

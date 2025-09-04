@@ -17,7 +17,7 @@
 #include <system_error>
 #include <vector>
 #include <cctype>
-#include <ctime>   // for footer date
+#include <ctime>
 
 namespace ts {
 
@@ -60,14 +60,12 @@ static std::string inline_partials(std::string tpl,
     if (content.empty()) content = read_file(p2.string(), perr);
     if (content.empty()) {
       err += "partial not found: " + p1.string() + " | " + p2.string() + "\n";
-      // leave the tag as-is and move on
       pos = close + 2;
       continue;
     }
 
     // replace the whole tag with the partial contents
     tpl.replace(pos, (close + 2) - pos, content);
-    // continue after inserted content
     pos += content.size();
   }
   return tpl;
@@ -78,6 +76,7 @@ static bool copy_one_asset(const std::filesystem::path& src_hint,
                            const std::filesystem::path& out_dir,
                            std::string& err) {
   std::error_code ec;
+
   auto exists_ok = [&](const std::filesystem::path& p) -> bool {
     return std::filesystem::exists(p);
   };
@@ -138,7 +137,7 @@ bool MustacheRenderer::render_to_file(std::string_view template_name,
   if (!view.is_valid()) { err_ = view.error_message(); return false; }
 
   kainjow::mustache::data data;
-  // raw JSON to be included with {{{ctx}}}
+  // raw JSON string for {{{ctx}}} in template
   data.set("ctx", std::string(context_json));
 
   // footer date
@@ -150,7 +149,7 @@ bool MustacheRenderer::render_to_file(std::string_view template_name,
     }
   }
 
-  // keep escaping neutral; template controls escaping
+  // Do not escape; template controls with {{}} vs {{{}}}
   view.set_custom_escape([](const std::string& s){ return s; });
 
   const std::string rendered = view.render(data);
@@ -174,7 +173,7 @@ bool MustacheRenderer::render_to_dir(std::string_view template_name,
   const std::filesystem::path outpath = outdir / std::string(out_name);
 
   if (!render_to_file(template_name, context_json, outpath.string())) {
-    return false; // err_ set
+    return false; // err_ already set
   }
   if (!copy_assets) return true;
 
@@ -192,4 +191,4 @@ bool MustacheRenderer::render_to_dir(std::string_view template_name,
   return true; // non-fatal if some assets are missing
 }
 
-}
+} 

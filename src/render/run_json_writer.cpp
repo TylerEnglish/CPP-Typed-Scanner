@@ -1,6 +1,6 @@
 #include "typed_scanner/run_json.hpp"
 #include <sstream>
-#include <cmath>     // for std::isfinite
+#include <cmath> // std::isfinite
 
 namespace ts {
 
@@ -10,18 +10,16 @@ static void esc(std::ostringstream& o, const std::string& s){
     switch(c){
       case '\\': o << "\\\\"; break;
       case '"':  o << "\\\""; break;
-      case '\n': o << "\\n"; break;
-      case '\r': o << "\\r"; break;
-      case '\t': o << "\\t"; break;
-      default:   o << c; break;
+      case '\n': o << "\\n";  break;
+      case '\r': o << "\\r";  break;
+      case '\t': o << "\\t";  break;
+      default:   o << c;      break;
     }
   }
   o << '"';
 }
 
-static inline double safe_num(double v) {
-  return std::isfinite(v) ? v : 0.0;
-}
+static inline double safe_num(double v){ return std::isfinite(v) ? v : 0.0; }
 
 std::string RunJsonWriter::to_json(const RunJsonPayload& p) {
   std::ostringstream o;
@@ -59,17 +57,17 @@ std::string RunJsonWriter::to_json(const RunJsonPayload& p) {
     if (i) o << ",";
     const auto& s = p.series[i];
     o << "{"
-      << "\"time_ms\":" << safe_num(s.time_ms) << ","
-      << "\"mb_s\":" << safe_num(s.mb_s) << ","
-      << "\"rss_mb\":" << safe_num(s.rss_mb) << ","
-      << "\"allocs_per_sec\":" << safe_num(s.allocs_per_sec)
+      << "\"time_ms\":"       << safe_num(s.time_ms)       << ","
+      << "\"mb_s\":"          << safe_num(s.mb_s)          << ","
+      << "\"rss_mb\":"        << safe_num(s.rss_mb)        << ","
+      << "\"allocs_per_sec\":"<< safe_num(s.allocs_per_sec)
       << "}";
   }
   o << "],";
 
-  o << "\"filename\":"; esc(o, p.filename); o << ",";
+  o << "\"filename\":";     esc(o, p.filename);     o << ",";
   o << "\"content_type\":"; esc(o, p.content_type); o << ",";
-  o << "\"etag\":"; esc(o, p.etag); o << ",";
+  o << "\"etag\":";         esc(o, p.etag);         o << ",";
   o << "\"file_size\":" << p.file_size;
 
   o << "}";
