@@ -166,3 +166,22 @@ if(TS_BUILD_TESTS)
     message(STATUS "Installed test fixtures to share/typed-scanner/tests/data")
   endif()
 endif()
+
+
+# Make TS_ENABLE_JSONL visible to code as 0/1
+target_compile_definitions(ts_core PUBLIC TS_ENABLE_JSONL=$<BOOL:${TS_ENABLE_JSONL}>)
+
+# ---- benches ---------------------------------------------------------------
+if(TS_BUILD_BENCH)
+  function(ts_add_bench exe src)
+    add_executable(${exe} "bench/${src}")
+    target_include_directories(${exe} PRIVATE "${CMAKE_SOURCE_DIR}/include")
+    target_link_libraries(${exe} PRIVATE ts_core)
+    install(TARGETS ${exe} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    message(STATUS "Benchmark enabled: ${exe} (${src})")
+  endfunction()
+
+  ts_add_bench(ts_bench_tokenizer   tokenizer_bench.cpp)
+  ts_add_bench(ts_bench_policy      policy_bench.cpp)
+  ts_add_bench(ts_bench_arena_alloc arena_alloc_bench.cpp)
+endif()
