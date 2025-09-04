@@ -292,14 +292,13 @@ CPP-Typed-Scanner/
 Pin 1 CPU while benchmarking:
 
 ```bash
-docker compose run --rm --no-deps --cpus=1 --cpuset-cpus=0 \
-  --entrypoint /bin/bash scanner -lc '/opt/typed-scanner/bin/ts_bench_policy --n=1000000 --iters=100'
+bash bench.sh
 ```
 
 Run benches fast:
 
 ```bash
-bash docker/bench.sh --quick
+bash bench.sh --quick
 ```
 
 Skip stdlib baselines (only built-ins):
