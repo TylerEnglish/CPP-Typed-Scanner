@@ -1,105 +1,142 @@
-# CPP‑Typed‑Scanner
+# CPP-Typed-Scanner
 
-High‑performance, typed scanning utilities and micro‑benchmarks for common data ingestion primitives (numeric parsing, date parsing, arena allocation, tokenization). The repository ships with a Dockerized environment that:
+High-performance, typed scanning utilities and micro-benchmarks for common data-ingestion primitives (numeric parsing, date parsing, arena allocation, tokenization). The repo ships with a Dockerized environment and a one-shot `bench.sh` helper that:
 
-* Builds the scanner and test binaries
-* Runs a small validation suite on start
-* Optionally starts a local server that continuously scans an `incoming/` folder and writes HTML reports to `artifacts/`
-
-This README covers setup, running the server, running the micro‑benches, and comparing results against standard library baselines.
+* Builds the images you need (runtime + a “builder” image that has `g++`)
+* Runs validation tests at container start
+* Optionally runs a server that watches an `incoming/` folder and renders HTML reports into `artifacts/`
+* Runs built-in benches (`ts_bench_*`) **and** baseline micro-benches (stdlib `from_chars`, `strptime`, `malloc/free`)
+* Prints a clean summary (p50 / p90 / best) and drops raw logs in `bench_out/`
 
 ---
 
 ## Table of contents
 
-- [CPP‑Typed‑Scanner](#cpptypedscanner)
+- [CPP-Typed-Scanner](#cpp-typed-scanner)
   - [Table of contents](#table-of-contents)
   - [Prerequisites](#prerequisites)
   - [Quick start](#quick-start)
-  - [What’s inside the container](#whats-inside-the-container)
-  - [Running the server](#running-the-server)
-  - [Running micro‑benchmarks](#running-microbenchmarks)
-    - [Policy bench (numbers \& dates)](#policy-bench-numbers--dates)
-    - [Arena allocator bench](#arena-allocator-bench)
-    - [Tokenizer bench](#tokenizer-bench)
-  - [Interpreting results](#interpreting-results)
-  - [Reproducible benchmarking tips](#reproducible-benchmarking-tips)
+  - [What’s in the image](#whats-in-the-image)
+  - [Run the server](#run-the-server)
+  - [Benchmarking (easy mode)](#benchmarking-easy-mode)
+  - [Benchmarking (manual mode)](#benchmarking-manual-mode)
+  - [Reading the numbers](#reading-the-numbers)
+  - [MinIO mirroring \& artifacts](#minio-mirroring--artifacts)
+  - [Entrypoint knobs (env vars)](#entrypoint-knobs-env-vars)
   - [Troubleshooting](#troubleshooting)
-  - [Project layout (host vs container)](#project-layout-host-vs-container)
+  - [Project layout](#project-layout)
+    - [Handy snippets](#handy-snippets)
 
 ---
 
 ## Prerequisites
 
-* **Docker Desktop** (or Docker Engine) with **Docker Compose v2**.
-* **Windows (PowerShell)**, **macOS**, or **Linux** shell. Examples include both PowerShell and POSIX‑shell friendly forms.
+* **Docker Desktop** (or Docker Engine) with **Compose v2**
+* A shell: **PowerShell**, **bash**, or **zsh**
 
-> **Note (Windows):** Use PowerShell with **double quotes outside** and **single quotes inside** for the `-lc '…'` bits in commands below.
+> Windows tip: prefer **PowerShell** examples. When using `-lc '…'`, keep outer **double quotes** and inner **single quotes**.
 
 ---
 
 ## Quick start
 
-Clone and `cd` into the repo, then:
+From the repo root:
 
 ```powershell
-# from the repo root
+# Build and start the stack (scanner + minio + helpers)
 cd .\docker
-# Build and bring up the service (first run will build the image)
 docker compose up --build
 ```
 
-On startup the container:
+On startup the scanner container:
 
-1. Prints discovered test binaries and runs a small sanity test suite.
-2. Starts the server (`typed-scanner`) on port **8080**.
-3. Mirrors data from a MinIO bucket (or local mirror) into `/work/incoming` and continually scans files it finds there, writing HTML reports into `/artifacts/typed-scanner`.
+1. Lists discovered test binaries and runs a small test suite
+2. Starts `typed-scanner` on **port 8080**
+3. If MinIO is configured, mirrors a bucket into `/work/incoming` and scans any CSV/JSONL/NDJSON it finds, writing reports under `/artifacts/typed-scanner`
 
-If your `docker-compose.yml` maps `8080:8080`, you can open the UI at: `http://localhost:8080`.
+Open: [http://localhost:8080](http://localhost:8080) (if `8080:8080` is mapped in compose)
 
-> **Why do I see repeated "\[mirror] syncing" logs?** The entrypoint runs a **long‑lived** mirror+scan loop by design. If you only want to run a one‑off benchmark binary, skip the server — see the next section.
-
----
-
-## What’s inside the container
-
-The image includes these compiled binaries under `/opt/typed-scanner/bin`:
-
-* `typed-scanner` – long‑running server
-* `ts_bench_policy` – numeric & date parsing
-* `ts_bench_arena_alloc` – arena allocator throughput
-* `ts_bench_tokenizer` – tokenizer throughput
-* `ts_test_*` – unit/validation tests executed at startup
-
-There’s also a working directory at `/work` with:
-
-* `/work/configs/config.toml` – server config
-* `/work/incoming` – files to scan (CSV/JSONL samples included)
-* `/artifacts/typed-scanner` – HTML reports output
-
-On the host, these are typically bind‑mounted from the `docker/` subfolder of this repo (see the compose file).
+> If you only want *benchmarks*, you don’t need the long-running server. See **Benchmarking (easy mode)** below.
 
 ---
 
-## Running the server
+## What’s in the image
 
-To run the server and watch it scan `incoming/`:
+Installed under `/opt/typed-scanner/bin`:
+
+* `typed-scanner` — HTTP server
+* `ts_bench_policy` — numeric & date parsing
+* `ts_bench_arena_alloc` — arena allocation throughput
+* `ts_bench_tokenizer` — tokenizer throughput
+* `ts_test_*` — unit tests executed by the entrypoint
+
+Runtime working dir `/work` contains:
+
+* `/work/configs/config.toml` — server config
+* `/work/incoming` — drop files here to be scanned
+* `/work/templates` & `/work/web` — report UX assets
+* `/artifacts/typed-scanner` — rendered HTML reports
+
+---
+
+## Run the server
 
 ```powershell
 cd .\docker
-# standard long‑running mode
 docker compose up
 ```
 
-Stop with `Ctrl+C`. Artifacts are written under the bind‑mounted `artifacts/` directory and indexed in `/artifacts/typed-scanner/index.html`.
+Stop with `Ctrl+C`. Reports land in `docker/artifacts/typed-scanner` on the host (bind-mounted).
 
 ---
 
-## Running micro‑benchmarks
+## Benchmarking (easy mode)
 
-When you want to run a **single binary** instead of the long‑running server, override the entrypoint and call the binary explicitly. Use `--no-deps` to avoid starting side services and `--rm` for a clean ephemeral container.
+Use the helper script — it finds your compose file, builds what’s needed, runs the benches, and prints a summary.
 
-> **PowerShell:**
+```bash
+# From anywhere inside the repo
+bash docker/bench.sh          # full run
+bash docker/bench.sh --quick  # fewer iters (fast smoke)
+```
+
+**What it runs**
+
+* Built-in: `ts_bench_policy`, `ts_bench_arena_alloc`, `ts_bench_tokenizer`
+* Baselines (compiled in a separate “builder” image that has `g++`):
+
+  * `from_chars` for decimal ints
+  * `strptime` for `%Y-%m-%d`
+  * `malloc/free` micro-alloc loop
+
+**Options**
+
+```
+--quick               # ITERS=10 for faster smoke runs
+--no-tokenizer        # skip tokenizer bench
+--no-policy           # skip policy bench
+--no-arena            # skip arena bench
+--no-baselines        # skip stdlib/malloc baselines
+--n <N>               # samples per iter for policy/tokenizer (default 1e6)
+--iters <I>           # iterations for policy/tokenizer (default 50)
+--malloc-n <N>        # items per iter for malloc baseline (default 5e5)
+--malloc-iters <I>    # iterations for malloc baseline (default 50)
+--malloc-sz <bytes>   # allocation size per item (default 64)
+```
+
+**Outputs**
+
+* Human summary to stdout (p50 / p90 / best)
+* Raw logs in `bench_out/` (one file per bench)
+* Full build/bench transcript in `bench_out/_bench.log`
+
+---
+
+## Benchmarking (manual mode)
+
+If you prefer to run the bench binaries yourself:
+
+> **PowerShell**
 
 ```powershell
 # Numbers & dates
@@ -108,105 +145,118 @@ docker compose run --rm --no-deps --entrypoint /bin/bash scanner -lc "/opt/typed
 # Arena allocator
 docker compose run --rm --no-deps --entrypoint /bin/bash scanner -lc "/opt/typed-scanner/bin/ts_bench_arena_alloc --n=500000 --iters=100 --arena=8388608"
 
-# Tokenizer (example)
+# Tokenizer
 docker compose run --rm --no-deps --entrypoint /bin/bash scanner -lc "/opt/typed-scanner/bin/ts_bench_tokenizer --iters=50"
 ```
 
-> **bash/zsh:**
+> **bash/zsh**
 
 ```bash
-# Numbers & dates
 docker compose run --rm --no-deps --entrypoint /bin/bash scanner -lc '/opt/typed-scanner/bin/ts_bench_policy --n=1000000 --iters=100'
-# Arena allocator
 docker compose run --rm --no-deps --entrypoint /bin/bash scanner -lc '/opt/typed-scanner/bin/ts_bench_arena_alloc --n=500000 --iters=100 --arena=8388608'
-# Tokenizer
 docker compose run --rm --no-deps --entrypoint /bin/bash scanner -lc '/opt/typed-scanner/bin/ts_bench_tokenizer --iters=50'
 ```
 
-### Policy bench (numbers & dates)
-
-Parses random decimal numbers and ISO‑8601 dates to measure per‑item throughput.
-
-Key flags:
-
-* `--n` – samples per iteration (default 1,000,000)
-* `--iters` – iteration count (print each iteration’s rate)
-
-### Arena allocator bench
-
-Allocates a fixed item shape from a monotonic arena to measure allocator throughput.
-
-Key flags:
-
-* `--n` – items per iteration
-* `--iters` – iteration count
-* `--arena` – arena size (bytes), e.g. `8388608` (8 MiB)
-
-### Tokenizer bench
-
-Exercises the tokenizer state machine on bundled samples.
-
-Key flags:
-
-* `--iters` – iteration count
+*Why not `g++` inside the runtime container?* The runtime image is slim. If you need `g++` for local experiments, use the **builder** stage (or just run `bash docker/bench.sh` and let it handle that).
 
 ---
 
-## Interpreting results
+## Reading the numbers
 
-The benches print **throughput** in *million items per second*. To normalize across CPUs, convert to **cycles per item**:
+All benches print **throughput**. Units:
+
+* Policy/Tokenizer: **million items / second (M/s)**
+* Arena/Malloc baseline: **million items / second (M items/s)**
+
+If you want cycles per item (rough CPU-agnostic view):
 
 ```
-cycles_per_item ≈ (CPU_Hz / items_per_second)
+cycles_per_item ≈ (CPU_GHz * 1e9) / (items_per_second)
 ```
 
-Example at 4.0 GHz:
+Examples at 4.0 GHz:
 
-* 58 M/s → \~69 cycles/item (numeric policy)
+* 58 M/s  → \~69 cycles/item (numeric policy)
 * 300 M/s → \~13 cycles/item (date policy)
 * 50 M items/s → \~80 cycles/item (arena alloc)
 
-Track **median** and **p95** over many iterations for a stable picture.
+**Repro tips**
+
+* Pin a CPU: `--cpus=1 --cpuset-cpus=0`
+* Warm-up: ignore first \~5 iterations; report median of the rest
+* Quiet box: close heavy apps/background indexing
+* Same distro/toolchain: compare inside the **same container**
+* Same data distribution: the benches already use fixed RNG seeds
 
 ---
 
-## Reproducible benchmarking tips
+## MinIO mirroring & artifacts
 
-* **Pin cores:**
+If you set these env vars, the scanner container mirrors a bucket into `/work/incoming`, scans new files, and writes fresh reports under `/artifacts/typed-scanner`:
 
-  ```bash
-  docker compose run --rm --no-deps --cpus=1 --cpuset-cpus=0 --entrypoint /bin/bash scanner -lc '…'
-  ```
-* **Warm up:** Ignore the first \~5 iterations; report median of the rest.
-* **Quiet system:** Close browsers/IDEs; disable background indexing.
-* **Same data distribution:** Use fixed seeds where possible.
-* **Same toolchain:** Compare inside the same container.
+* `MINIO_ENDPOINT` — e.g. `http://minio:9000`
+* `MINIO_BUCKET` — e.g. `incoming`
+* `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`
+
+Optional: also push finished artifacts to a bucket:
+
+* `PUSH_TO_MINIO=true`
+* `ARTIFACTS_BUCKET=artifacts-typed-scanners` (default)
+
+The entrypoint uses the `mc` (MinIO client) CLI preinstalled in the image.
+
+---
+
+## Entrypoint knobs (env vars)
+
+Most folks don’t need these; they’re here if you want to customize behavior:
+
+| Var                | Default                                | Meaning                                                                                                            |
+| ------------------ | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `SCANNER_BIN`      | `/opt/typed-scanner/bin/typed-scanner` | Path to server binary                                                                                              |
+| `PORT`             | `8080`                                 | HTTP port for the server                                                                                           |
+| `SCAN_INTERVAL`    | `15`                                   | Seconds between mirror/scan passes                                                                                 |
+| `ART_ROOT`         | see below                              | Artifact root. Defaults to `/artifacts/typed-scanner` unless inferred from `SCANNER_ARGS`                          |
+| `SCANNER_ARGS`     | *empty*                                | Extra flags passed to `typed-scanner`. If you don’t set `--artifact-root` or `--port`, the entrypoint injects them |
+| `SLUG_MODE`        | `basename`                             | Report slugging mode                                                                                               |
+| `SLUG_LEN`         | `64`                                   | Max slug length                                                                                                    |
+| `RUN_TESTS`        | `1`                                    | Set to `0` to skip the startup test suite                                                                          |
+| `MINIO_*`          | —                                      | See [MinIO mirroring & artifacts](#minio-mirroring--artifacts)                                                     |
+| `PUSH_TO_MINIO`    | `false`                                | Mirror reports back to MinIO                                                                                       |
+| `ARTIFACTS_BUCKET` | `artifacts-typed-scanners`             | Bucket for pushed artifacts                                                                                        |
+
+The entrypoint tries to ensure `ART_ROOT` is writable; it will chmod `0777` or fall back to `/work/artifacts-fallback` if needed.
 
 ---
 
 ## Troubleshooting
 
-**I get `no such service: /opt/typed-scanner/bin/…`**
+**`no such service: /opt/typed-scanner/bin/...`**
 
-> Compose thought the *command* was the service name. Ensure the order is:
-> `docker compose run [OPTIONS] --entrypoint /bin/bash scanner -lc '…'`
-> The word `scanner` must be the **service name**, followed by `-lc 'command'`.
+> The service name goes **before** the command. Use
+> `docker compose run --rm --no-deps --entrypoint /bin/bash scanner -lc '…'`
+> (`scanner` is the service; the command is after `-lc`.)
 
-**It just keeps printing mirror/scan logs**
+**`failed to read dockerfile: open Dockerfile: no such file or directory` (from `bench.sh`)**
 
-> That’s the server mode. For one‑off benches, add `--no-deps --entrypoint /bin/bash … -lc '…'` and call the bench binary directly as shown above.
+> Keep the repo layout intact (`docker/` folder next to the root). The script auto-detects compose in repo root or `./docker` and builds with **repo root** as context so `COPY . /src` works.
 
-**Port 8080 is taken**
+**`g++: command not found` inside the runtime container**
 
-> Edit the port mapping in `docker-compose.yml` or stop the conflicting process, then re‑run.
+> Expected — the runtime is slim. Use the “builder” image (or just run `bash docker/bench.sh` to compile baselines there).
 
-**Windows quoting woes**
+**Windows CR/LF line endings**
 
-> Prefer the PowerShell examples. If using CMD, escape quotes accordingly or switch to PowerShell.
+> If you edit scripts in Windows, strip CRLFs once inside WSL/bash:
+> `sed -i 's/\r$//' docker/bench.sh docker/scripts/entrypoint.sh`
+
+**Port 8080 already in use**
+
+> Change the host mapping in `docker/docker-compose.yml` or stop the conflicting service.
 
 ---
 
-## Project layout (host vs container)
+## Project layout
 
 **Host (repo)**
 
@@ -214,17 +264,46 @@ Track **median** and **p95** over many iterations for a stable picture.
 CPP-Typed-Scanner/
 ├─ docker/
 │  ├─ docker-compose.yml
+│  ├─ bench.sh                 # one-shot benchmark driver
 │  ├─ configs/
-│  ├─ incoming/        # place CSV/JSONL here to be scanned
-│  └─ artifacts/       # HTML reports written here by the container
-└─ … (source / scripts)
+│  ├─ artifacts/               # HTML reports (bind-mounted)
+│  ├─ incoming/                # files to scan (bind-mounted)
+│  └─ scripts/
+│     └─ entrypoint.sh
+├─ include/typed_scanner/…
+├─ src/…                       # core library + server
+├─ bench/…                     # ts_bench_* sources
+└─ tests/…                     # unit tests + sample data
 ```
 
 **Container (runtime)**
 
 ```
-/opt/typed-scanner/bin/      # typed-scanner, ts_bench_* and ts_test_* binaries
+/opt/typed-scanner/bin/        # typed-scanner, ts_bench_*, ts_test_*
 /work/configs/config.toml
-/work/incoming               # mirrored input data (bind-mounted)
-/artifacts/typed-scanner     # HTML reports (bind-mounted)
+/work/incoming
+/artifacts/typed-scanner       # report roots
+```
+
+---
+
+### Handy snippets
+
+Pin 1 CPU while benchmarking:
+
+```bash
+docker compose run --rm --no-deps --cpus=1 --cpuset-cpus=0 \
+  --entrypoint /bin/bash scanner -lc '/opt/typed-scanner/bin/ts_bench_policy --n=1000000 --iters=100'
+```
+
+Run benches fast:
+
+```bash
+bash docker/bench.sh --quick
+```
+
+Skip stdlib baselines (only built-ins):
+
+```bash
+bash docker/bench.sh --no-baselines
 ```
