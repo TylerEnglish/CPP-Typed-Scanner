@@ -1,4 +1,6 @@
 # ── C/C++ & build outputs
+bench_out/*
+bench_out
 *.o
 *.obj
 *.lo
@@ -69,3 +71,4 @@ data/large/
 
 
 _docs
+
