@@ -21,6 +21,7 @@ RUN test -f /src/include/typed_scanner/http_server.hpp || (echo "Missing headers
 RUN cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DBUILD_TESTING=OFF \
+      -DTS_BUILD_TESTS=ON \
       -DCMAKE_INSTALL_PREFIX=/opt/typed-scanner \
  && cmake --build build -j \
  && cmake --install build
@@ -50,6 +51,7 @@ WORKDIR /work
 COPY --from=builder /src/configs   /work/configs
 COPY --from=builder /src/templates /work/templates
 COPY --from=builder /src/web       /work/web
+COPY --from=builder /src/tests/data /work/tests/data
 RUN mkdir -p /artifacts && ln -s /artifacts /work/artifacts
 COPY docker/scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN set -eux; f=/usr/local/bin/entrypoint.sh; sed -i 's/\r$//' "$f"; \

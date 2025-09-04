@@ -66,11 +66,71 @@ write_root_redirect_to() {
 }
 
 push_dir_to_minio() {
-  # Mirror entire ART_ROOT to a bucket path once in a while (cheap op for small artifacts)
   [[ "$PUSH_TO_MINIO" == "true" ]] || return 0
   [[ -n "${MINIO_ENDPOINT:-}" && -n "${MINIO_ROOT_USER:-}" && -n "${MINIO_ROOT_PASSWORD:-}" ]] || return 0
   mc mirror --overwrite "${ART_ROOT}" "local/${ARTIFACTS_BUCKET}" || true
 }
+
+# ---- run tests once; refuse to start if they fail ---------------------------
+TEST_BIN_DIR="/opt/typed-scanner/bin"
+TEST_LOG="/work/tests.log"
+
+# Unit tests we expect by name
+RUN_THESE=(
+  ts_test_chunk_reader
+  ts_test_csv_fsm
+  ts_test_jsonl_tokenizer
+  ts_test_parse_policy
+  ts_test_record_view
+  ts_test_run_json
+)
+
+# Auto-discover any integration tests that were installed (ts_it_*)
+shopt -s nullglob
+IT_FOUND=("${TEST_BIN_DIR}"/ts_it_*)
+shopt -u nullglob
+for p in "${IT_FOUND[@]}"; do
+  [[ -x "$p" ]] && RUN_THESE+=("$(basename "$p")")
+done
+
+if [[ "${RUN_TESTS:-1}" != "0" ]]; then
+  echo "[entrypoint] running tests (logs also in ${TEST_LOG})…"
+  : > "${TEST_LOG}"
+
+  # Some tests may need to exec the app
+  export TS_SCANNER_BIN="${SCANNER_BIN}"
+
+  # Show what we actually have in the image
+  echo "[tests] discovered test bins:" | tee -a "${TEST_LOG}"
+  (ls -1 "${TEST_BIN_DIR}"/ts_* 2>/dev/null || true) | sed 's/^/[tests]   /' | tee -a "${TEST_LOG}"
+
+  failures=0
+  for t in "${RUN_THESE[@]}"; do
+    if [[ -x "${TEST_BIN_DIR}/${t}" ]]; then
+      echo "[tests] running: ${TEST_BIN_DIR}/${t}" | tee -a "${TEST_LOG}"
+      if "${TEST_BIN_DIR}/${t}" 2>&1 | tee -a "${TEST_LOG}"; then
+        echo "[tests] PASS: ${t}" | tee -a "${TEST_LOG}"
+      else
+        echo "[tests] FAILED: ${t} (see ${TEST_LOG})"
+        failures=$((failures+1))
+        # Fail fast (remove this break if you want to run all)
+        echo "[entrypoint] tests FAILED — not starting server. Tail of ${TEST_LOG}:"
+        tail -n 200 "${TEST_LOG}"
+        exit 1
+      fi
+    else
+      echo "[tests] SKIP: ${t} (missing: ${TEST_BIN_DIR}/${t})" | tee -a "${TEST_LOG}"
+    fi
+  done
+
+  echo "[tests] summary: failures=${failures}" | tee -a "${TEST_LOG}"
+  if (( failures > 0 )); then
+    echo "[entrypoint] tests FAILED — not starting server."
+    exit 1
+  fi
+else
+  echo "[entrypoint] tests skipped (RUN_TESTS=0)"
+fi
 
 # -------- start HTTP server --------
 read -r -a ARGS <<< "${SCANNER_ARGS:-}"
@@ -89,7 +149,6 @@ if [[ -n "${MINIO_ENDPOINT:-}" && -n "${MINIO_BUCKET:-}" && -n "${MINIO_ROOT_USE
   INCOMING_DIR="/work/incoming"
   mkdir -p "${INCOMING_DIR}"
 
-  # mc alias (retry)
   for i in {1..20}; do
     if mc alias set local "${MINIO_ENDPOINT}" "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1; then
       echo "[mc] alias 'local' configured"; break
@@ -97,7 +156,6 @@ if [[ -n "${MINIO_ENDPOINT:-}" && -n "${MINIO_BUCKET:-}" && -n "${MINIO_ROOT_USE
     echo "[mc] alias set failed, retrying ($i/20)…"; sleep 1
   done
 
-  # also ensure artifacts bucket exists if pushing
   if [[ "$PUSH_TO_MINIO" == "true" ]]; then
     mc mb --ignore-existing "local/${ARTIFACTS_BUCKET}" >/dev/null 2>&1 || true
   fi
@@ -107,12 +165,10 @@ if [[ -n "${MINIO_ENDPOINT:-}" && -n "${MINIO_BUCKET:-}" && -n "${MINIO_ROOT_USE
       echo "[mirror] syncing bucket -> ${INCOMING_DIR} ..."
       mc mirror --overwrite --remove "local/${MINIO_BUCKET}" "${INCOMING_DIR}" || true
 
-      # Gather candidates
       mapfile -d '' files < <(find "${INCOMING_DIR}" -type f \
         \( -iname '*.csv' -o -iname '*.jsonl' -o -iname '*.ndjson' \) -print0)
       echo "[scan] found ${#files[@]} candidate file(s)"
 
-      # Scan one-by-one and detect the artifact dir by mtime (no slug guessing)
       for ((i=0; i<${#files[@]}; ++i)); do
         f="${files[$i]}"
         echo "[scan] ($((i+1))/${#files[@]}) $f"
@@ -125,7 +181,6 @@ if [[ -n "${MINIO_ENDPOINT:-}" && -n "${MINIO_BUCKET:-}" && -n "${MINIO_ROOT_USE
               --slug-mode="${SLUG_MODE}" \
               --slug-len="${SLUG_LEN}" \
               --scan "$f"; then
-          # What new report appeared since $mark?
           new_report="$(find "${ART_ROOT}" -type f -name 'report.html' -newer "$mark" -print | sort | tail -n1 || true)"
           rm -f "$mark" || true
           if [[ -n "$new_report" && -f "$new_report" ]]; then

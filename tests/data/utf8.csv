@@ -1,4 +1,7 @@
-id,text
-1,"naïve façade rôle"
-2,"emoji: 👍🏽🚀"
-3,"漢字とかなの混在"
+id,word,script
+1,mañana,Latin
+2,über,Latin
+3,東京,Kanji
+4,😀,Emoji
+5,наука,Cyrillic
+6,हिन्दी,Devanagari

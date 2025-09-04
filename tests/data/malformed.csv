@@ -1,5 +1,7 @@
-id,name,notes
-1,Good,"ok"
-2,Bad,"missing closing quote
-3,AlsoBad,Unescaped "quote",
-4,Good,"""quote inside OK"""
+id,name,age
+1,Alice,31
+2,"Bob, B.",27
+3,Charlie,29
+4,"Unclosed quote,33
+5,Dangling,comma,35
+6,"Bad "inner" quotes",40

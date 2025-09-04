@@ -1,5 +1,6 @@
-{"id":1,"ok":true}
-{"id":2,"ok":false
-{"id":3,"ok":true}
-[]
-{"id":5,"ok":"maybe"}
+{"id":1,"name":"ok"}
+{"id":2,"name":bad}
+{"id":3, "name":"also ok"}
+{"id":4 "name":"missing comma"}
+not even json
+{"id":5,"name":"ok after bad lines"}

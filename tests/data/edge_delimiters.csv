@@ -1,4 +1,7 @@
-a,b,c
-"leading,comma",x,1
-y,"trailing,comma",2
-"embedded ""quote"" ok",z,3
+id,name,notes
+1,"Doe, John","has comma"
+2,"""quoted""","double quotes escaped by doubling"
+3,"Tabs	inside","ok"
+4,"empty field",""
+5,"spaces around","  keep  "
+6,"newline marker \n (literal slash-n)","ok"
