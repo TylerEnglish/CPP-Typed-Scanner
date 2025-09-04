@@ -304,5 +304,5 @@ bash bench.sh --quick
 Skip stdlib baselines (only built-ins):
 
 ```bash
-bash docker/bench.sh --no-baselines
+bash bench.sh --no-baselines
 ```
